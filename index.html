@@ -11,6 +11,11 @@
 </head>
 <body>
 
+<!-- 预加载：先把整本书的图下载完再开始，避免翻页时卡顿 -->
+<div class="loading" id="loading" role="status" aria-label="加载中">
+  <div class="loading__track"><i class="loading__fill" id="loadFill"></i></div>
+</div>
+
 <!-- 环境光：网格渐变，随书页取色变化 -->
 <div class="amb" aria-hidden="true">
   <span class="amb__b amb__b--1"></span>
@@ -31,6 +36,12 @@
 
     <!-- 页面堆叠的厚度 -->
     <span class="stack stack--r" aria-hidden="true"></span>
+
+    <!-- 书页厚度：合上时从封面下方露出的白色内页 -->
+    <span class="pageblock" id="pageblock" aria-hidden="true"></span>
+
+    <!-- 书腰：合上时露出的书脊厚度（由布局合成，图里没有画） -->
+    <span class="spine" id="spine" aria-hidden="true"></span>
 
     <!-- 摊开的两页 -->
     <div class="page page--l" id="pageL"><i class="page__img"></i></div>

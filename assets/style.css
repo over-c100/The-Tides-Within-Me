@@ -1,4 +1,4 @@
-/* =========================================================
+﻿/* =========================================================
    我和我 · 翻书版
    Mesh Gradient 环境光 + 写实精装书 + 纸张翻动
    ========================================================= */
@@ -18,6 +18,9 @@
   --ease: cubic-bezier(.33,.09,.24,1);
   --turn: 900ms;
   --ratio: 2.82867;      /* 4144 / 1465 */
+  /* 封面是三段包封：封底 | 书腰 | 封面，书腰占整幅 4%，两侧封面各 48% */
+  --cover-scale: 208.333%;  /* 1 / 0.48：页内背景放大到只露出单侧封面 */
+  --spine-w: 3.9%;          /* 书腰宽度（占书宽的百分比） */
 
   /* 书宽：屏幕宽 / 屏幕高 / 图片原生 2 倍上限（避免超宽屏把图拉伸糊） */
   --bw: min(94vw, 2072px, calc((100svh - 148px) * 2.82867));
@@ -44,6 +47,30 @@ body{
   overflow:hidden;
   -webkit-font-smoothing:antialiased;
   -webkit-tap-highlight-color:transparent;
+}
+
+/* =========================================================
+   预加载：整本书下载完再开始，附一条进度条
+   ========================================================= */
+.loading{
+  position:fixed; inset:0; z-index:100;
+  display:grid; place-items:center;
+  background:radial-gradient(ellipse at 50% 46%, rgba(17,15,26,.96), rgba(6,6,11,.99) 72%);
+  transition:opacity .55s ease, visibility .55s ease;
+}
+.loading.is-done{ opacity:0; visibility:hidden; pointer-events:none; }
+.loading__track{
+  width:min(48vw, 240px); height:2px;
+  border-radius:2px;
+  background:rgba(255,255,255,.12);
+  overflow:hidden;
+}
+.loading__fill{
+  display:block; height:100%; width:0;
+  border-radius:2px;
+  background:linear-gradient(90deg, rgba(167,139,250,.9), rgba(244,241,234,.95));
+  box-shadow:0 0 12px rgba(167,139,250,.7);
+  transition:width .3s ease;
 }
 
 /* =========================================================
@@ -113,17 +140,32 @@ body{
   width:var(--bw);
   aspect-ratio:var(--ratio);
   transform-style:preserve-3d;
-  transform:translateX(0);
-  translate:0 0;
-  transition:transform var(--turn) var(--ease), translate .5s var(--ease), box-shadow .6s var(--ease);
+  /* 位移（合上/摊开）用 translate，跟随 --turn；
+     倾斜 + 抬起用 transform，跟随更快的手势节奏 —— 两者互不干扰 */
+  --tx: 0%;
+  --lift: 0px;
+  --rx: 0deg;
+  --ry: 0deg;
+  translate: var(--tx) 0;
+  transform: perspective(1600px) rotateX(var(--rx)) rotateY(var(--ry)) translateY(var(--lift));
+  transition: translate var(--turn) var(--ease), transform .35s var(--ease), box-shadow .6s var(--ease);
   cursor:grab;
   touch-action:pan-y;
   user-select:none;
 }
 .book.is-dragging{ cursor:grabbing; transition:none; }
 
-/* 悬停反馈：书轻轻抬起 + 光晕，并跟随鼠标滑过一道高光 */
-.book.is-hover{ translate:0 -6px; }
+/* 开场：不要横向滑入，改成「从后往前」渐渐显出来 */
+.book.is-booting{ transition:none; }
+.book.is-entering{ animation:bookIn 1s var(--ease) both; }
+@keyframes bookIn{
+  0%  { opacity:0; scale:.90; }
+  60% { opacity:1; scale:.985; }
+  100%{ opacity:1; scale:1; }
+}
+
+/* 悬停反馈：书轻轻抬起 + 跟随鼠标的 3D 倾斜 + 光斑 */
+.book.is-hover{ --lift: -8px; }
 .book.is-hover::after{ background:radial-gradient(ellipse at 50% 40%, rgba(0,0,0,.8), rgba(0,0,0,.42) 46%, transparent 74%); }
 .book.is-hover .page--l,
 .book.is-hover .page--r{
@@ -142,14 +184,14 @@ body{
   filter:blur(14px);
   transform:translateZ(-40px);
   pointer-events:none;
-  transition:opacity var(--turn) var(--ease), left var(--turn) var(--ease), right var(--turn) var(--ease);
+  transition:none;   /* 落地投影不做动画，避免中间出现游走的阴影 */
 }
 
 /* ---------- 两页 ---------- */
 .page{
   position:absolute; top:0; height:100%; width:50%;
   overflow:hidden;
-  background-size:200% 100%;
+  background-size:var(--cover-scale) 100%;   /* 抠掉书腰后每页只显示一侧封面 */
   background-repeat:no-repeat;
   backface-visibility:hidden;
 }
@@ -175,7 +217,7 @@ body{
 /* 真实书页图（占位图之上逐层浮出） */
 .page__img{
   position:absolute; inset:0;
-  background-size:200% 100%;
+  background-size:var(--cover-scale) 100%;
   background-repeat:no-repeat;
   opacity:0;
   transition:opacity .45s ease;
@@ -202,23 +244,30 @@ body{
   background-image:repeating-linear-gradient(90deg,
     rgba(232,226,212,.55) 0 1px, rgba(120,113,99,.5) 1px 2px);
   box-shadow:2px 0 6px -2px rgba(0,0,0,.55);
+  opacity:.8;
+  /* 与左缘页堆一致：出现/消失跟着翻页时长渐变，不会「啪」地跳出来 */
+  transition:opacity var(--turn) var(--ease);
 }
 
 /* ---------- 书脊凹槽 ---------- */
 .gutter{
   position:absolute; z-index:4; left:50%; top:0; bottom:0;
-  width:6.2%; transform:translateX(-50%);
+  width:6.2%;
+  transform:translateX(-50%);
+  transition:none !important;
   pointer-events:none;
+  /* 普通半透明遮罩（不做 multiply）：这样它与底下画面无关，
+     翻页时底下换什么图，它的明暗都不会跟着变 */
   background:linear-gradient(90deg,
-    transparent 0%,
-    rgba(0,0,0,.24) 26%,
-    rgba(0,0,0,.5) 47%,
-    rgba(0,0,0,.56) 50%,
-    rgba(0,0,0,.5) 53%,
-    rgba(0,0,0,.24) 74%,
-    transparent 100%);
-  mix-blend-mode:multiply;
-  transition:opacity .5s ease;
+    rgba(0,0,0,0)   0%,
+    rgba(0,0,0,.03) 14%,
+    rgba(0,0,0,.16) 32%,
+    rgba(0,0,0,.34) 46%,
+    rgba(0,0,0,.40) 50%,
+    rgba(0,0,0,.34) 54%,
+    rgba(0,0,0,.16) 68%,
+    rgba(0,0,0,.03) 86%,
+    rgba(0,0,0,0)   100%);
 }
 .gutter::after{
   content:""; position:absolute; left:50%; top:0; bottom:0; width:1px;
@@ -260,38 +309,38 @@ body{
 .leaf .strip{
   position:absolute; top:0; height:100%;
   transform-style:preserve-3d;
+  -webkit-transform-style:preserve-3d;
   transform-origin:left center;
-  will-change:transform;
 }
 .leaf .curl > .strip{ left:0; }
 .leaf .strip > .strip{ left:100%; transform:rotateY(var(--td,0deg)); }
 
 .leaf .face{
-  position:absolute; top:0; bottom:0; left:0; right:-1.2px;
+  position:absolute; top:0; bottom:0; left:0; right:-1px;   /* 1px 叠边：相邻切片互相咬合，消除竖线 */
   backface-visibility:hidden;
   -webkit-backface-visibility:hidden;
   background-repeat:no-repeat;
+  transform:translateZ(0.02px);   /* 给正反面一点深度差，彻底分开 */
 }
 .leaf .face.back{ transform:rotateY(180deg); }
 
-/* 每条的弯曲阴影：渐变形状固定，只改透明度。
-   （改颜色会触发重绘，改透明度只是合成，翻页时省很多开销） */
+/* 每条的弯曲阴影：两端透明度由 JS 逐帧给出（--a1 近边、--a2 远边）。
+   相邻切片共享同一个边界值，整张叶子就是一条连续渐变，
+   不会在每条接缝处各压一道暗边（那看着像折痕） */
 .leaf .face .sh{
   position:absolute; inset:0; pointer-events:none;
-  opacity:0;
-}
-.leaf .face.front .sh{
-  background:linear-gradient(90deg, rgba(18,14,10,.95) 0%, rgba(18,14,10,0) 78%);
+  background:linear-gradient(90deg, rgba(16,12,8,var(--a1,0)), rgba(16,12,8,var(--a2,0)));
 }
 .leaf .face.back .sh{
-  background:linear-gradient(270deg, rgba(18,14,10,.95) 0%, rgba(18,14,10,0) 78%);
+  background:linear-gradient(270deg, rgba(16,12,8,var(--a1,0)), rgba(16,12,8,var(--a2,0)));
 }
-/* 每条的高光：同理只用透明度；不用 mix-blend-mode，
-   避免每条都多出一层混合合成 */
+/* 每条的高光：同样做成连续渐变（--g1 / --g2） */
 .leaf .face .gl{
   position:absolute; inset:0; pointer-events:none;
-  background:#fffaf0;
-  opacity:0;
+  background:linear-gradient(90deg, rgba(255,250,240,var(--g1,0)), rgba(255,250,240,var(--g2,0)));
+}
+.leaf .face.back .gl{
+  background:linear-gradient(270deg, rgba(255,250,240,var(--g1,0)), rgba(255,250,240,var(--g2,0)));
 }
 
 
@@ -320,37 +369,144 @@ body{
 .book.is-flash{ animation:flash .26s ease; }
 @keyframes flash{ 0%,100%{ opacity:1 } 45%{ opacity:.72 } }
 
-/* 合上（前封面）时：只显示封面（右页），左页与页堆收起 */
-.book.is-closed{ transform:translateX(-25%); }
+/* ---------- 书页厚度（白色内页） ----------
+   一整块，只在合上时贴边显示：右侧竖纹、底部横纹。 */
+.pageblock{
+  position:absolute; z-index:0;
+  top:1.6%; bottom:-2.6%;
+  left:0; right:-5px;
+  pointer-events:none;
+  opacity:0;
+  visibility:hidden;
+  /* .book 是 preserve-3d，压到书页与书腰之后 */
+  transform:translateZ(-3px);
+  border-radius:0 0 5px 5px;
+  background-image:
+    repeating-linear-gradient(90deg,          /* 侧面：竖条纹 */
+      rgba(253,251,246,.97) 0 2px,
+      rgba(203,196,183,.92) 2px 3.4px),
+    repeating-linear-gradient(180deg,         /* 底部：横条纹 */
+      rgba(253,251,246,.97) 0 2px,
+      rgba(203,196,183,.92) 2px 3.4px);
+  background-size:6px 100%, 100% 11px;
+  background-position:right top, left bottom;
+  background-repeat:no-repeat, no-repeat;
+  box-shadow:0 14px 26px -14px rgba(0,0,0,.9);
+  transition:opacity .25s ease;
+}
+/* 合上前封面：左缘贴书腰左缘，右缘与页堆外沿齐平 */
+.book.is-closed .pageblock{
+  left:calc(50% - var(--spine-w, 3.9%));
+  right:-5px;
+  opacity:1;
+  visibility:visible;
+  background-position:right top, left bottom;
+}
+/* 合到封底：镜像（竖纹换到左边） */
+.book.is-closed-back .pageblock{
+  left:-5px;
+  right:calc(50% - var(--spine-w, 3.9%));
+  opacity:1;
+  visibility:visible;
+  background-position:left top, left bottom;
+}
+/* 页堆已并入白页层，合上时不再单独显示，避免出现两层厚度 */
+.book.is-closed .stack--r{ opacity:0; }
+
+/* ---------- 书腰（书脊）----------
+   封面图是三段包封，中线那条竖排「我和我」就是书脊标题。
+   这里把中间 4% 的图切出来，并让它像长方体的侧面一样向后退，
+   做出书脊的透视，而不是一条平贴的色带。 */
+.spine{
+  position:absolute; z-index:5; top:0; bottom:0;
+  /* 固定默认位置：未合上时也不会退回到静态位置（否则淡出时会漂走） */
+  left:calc(50% - var(--spine-w, 3.9%));
+  width:var(--spine-w, 3.9%);
+  pointer-events:none;
+  opacity:0;
+  border-radius:3px 0 0 3px;
+  background-repeat:no-repeat;
+  /* 与页面同一缩放比例，只露出中间那 4% */
+  background-size:calc(var(--bw) * 1.041667) 100%;
+  background-position-x:calc(var(--bw) * -0.5013);
+  backface-visibility:hidden;
+  /* 倾斜写在基础样式里：一开书类名被移除时不会瞬间变回矩形（否则淡出时会看到「变形」）；
+     同时给一个明确的 3D 深度 —— 在书页(0)之后、厚度层(-3)之前。
+     preserve-3d 下 z-index 不生效，不给深度就会按 DOM 顺序画到页面上面（透出来）。 */
+  transform:skewY(-15deg) translateZ(-1px);
+  transform-origin:right center;
+  box-shadow:0 14px 34px -16px rgba(0,0,0,.95);
+  transition:opacity .28s ease;   /* 开书时让书腰尽快退场 */
+  will-change:transform;
+}
+/* 侧面明暗：只用阴影做圆柱/棱柱的体积，不要横线纹理 */
+.spine::after{
+  content:""; position:absolute; inset:0;
+  border-radius:inherit; pointer-events:none;
+  background:linear-gradient(90deg,
+    rgba(0,0,0,.34) 0%,
+    rgba(0,0,0,.06) 22%,
+    rgba(255,255,255,.05) 50%,
+    rgba(0,0,0,.06) 78%,
+    rgba(0,0,0,.30) 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.08),
+    inset 0 18px 22px -20px rgba(255,255,255,.22),
+    inset 0 -18px 22px -20px rgba(0,0,0,.45);
+}
+/* 合上前封面：书腰贴在封面左缘，上下两条边同斜率（右高左低），
+   左下角正好落在白色厚度层的左下角，整体像一个长方体的侧面。 */
+.book.is-closed .spine{
+  left:calc(50% - var(--spine-w, 3.9%));
+  opacity:1;
+  transform:skewY(-15deg) translateZ(-1px);
+  transform-origin:right center;
+}
+/* 合到封底：镜像到右侧 */
+.book.is-closed-back .spine{
+  left:50%;
+  opacity:1;
+  transform:skewY(15deg) translateZ(-1px);
+  transform-origin:left center;
+}
+
+/* 合上（前封面）时：书腰 + 封面一起居中 */
+.book.is-closed{ --tx: calc(-25% + var(--spine-w, 3.9%) * 0.5); }
 .book.is-closed .page--l,
 .book.is-closed .stack--l,
 .book.is-closed .gutter,
 .book.is-collapsing .stack--l{ opacity:0; }
 .book.is-closed .page--r{ border-radius:3px; }
-.book.is-closed .page--r::before{
+/* 合上时书脊那道压痕：常驻元素，不做任何过渡 —— 保持恒定，不参与动画 */
+.page--r::before,
+.page--l::before{
   content:""; position:absolute; inset:0;
   border-radius:3px;
-  background:linear-gradient(90deg, rgba(0,0,0,.5) 0%, rgba(0,0,0,.18) 4%, transparent 12%);
   pointer-events:none;
+  opacity:0;
 }
+.page--r::before{
+  background:linear-gradient(90deg, rgba(0,0,0,.5) 0%, rgba(0,0,0,.18) 4%, transparent 12%);
+}
+.page--l::before{
+  background:linear-gradient(270deg, rgba(0,0,0,.5) 0%, rgba(0,0,0,.18) 4%, transparent 12%);
+}
+.book.is-closed .page--r::before{ opacity:1; }
 /* 合上时投影只落在封面下方 */
 .book.is-closed::after{
   left:52%; right:2%; bottom:-9%;
   height:20%;
 }
 
-/* 合上（封底）时：只显示封底（左页），右页与页堆收起 —— 与前封面镜像 */
-.book.is-closed-back{ transform:translateX(25%); }
+/* 合上（封底）时：只显示封底（左页）+ 右侧书腰，右页与页堆收起 —— 与前封面镜像 */
+.book.is-closed-back{ --tx: calc(25% - var(--spine-w, 3.9%) * 0.5); }
 .book.is-closed-back .page--r,
 .book.is-closed-back .stack--r,
+
+.book.is-closed-back .page--r,
 .book.is-closed-back .gutter{ opacity:0; }
 .book.is-closed-back .page--l{ border-radius:3px; }
-.book.is-closed-back .page--l::before{
-  content:""; position:absolute; inset:0;
-  border-radius:3px;
-  background:linear-gradient(270deg, rgba(0,0,0,.5) 0%, rgba(0,0,0,.18) 4%, transparent 12%);
-  pointer-events:none;
-}
+.book.is-closed-back .page--l::before{ opacity:1; }
 .book.is-closed-back::after{
   left:2%; right:52%; bottom:-9%;
   height:20%;
@@ -506,6 +662,8 @@ body{
 @media (orientation:portrait) and (max-width:1100px){
   .rotate{ display:grid; }
 }
+/* 只要实际是横屏（宽>高），一律不显示提示层 —— 以 JS 判断为准 */
+body.is-landscape .rotate{ display:none; }
 
 /* 点一下 = 当作已把手机横过来：收起提示，露出书页 */
 .rotate.is-off{ display:none; }
@@ -542,6 +700,12 @@ body.is-flipland .weather{
 
 /* 进度条：竖屏模式下要显示（否则会被窄屏规则隐藏） */
 body.is-flipland .dots{ display:flex; }
+
+/* 竖屏旋转态：厚度条、页堆这些「贴边装饰」转 90° 后会横穿书页，
+   变成一条白带，所以在这个模式下直接隐藏，只保留书本身。 */
+body.is-flipland .pageblock,
+body.is-flipland .stack--r,
+body.is-flipland .stack--l{ display:none; }
 
 /* =========================================================
    降级

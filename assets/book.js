@@ -53,6 +53,36 @@
     return e;
   }
 
+  /* 封面内侧的衬页：纯色，不显示任何画（避免开书时露出封底画面） */
+  var INSIDE_COVER = '#241f31';
+  function insideCover(pg) {
+    if (!pg) return;
+    pg.style.transition = 'none';
+    pg.style.opacity = '1';
+    pg.style.backgroundImage = 'none';
+    pg.style.backgroundColor = INSIDE_COVER;
+    var im = pg.querySelector('.page__img');
+    if (im) im.style.opacity = '0';
+  }
+  function clearInsideCover(pg) {
+    if (!pg) return;
+    pg.style.backgroundColor = '';
+    pg.style.backgroundImage = '';
+    var im = pg.querySelector('.page__img');
+    if (im) im.style.opacity = '';
+  }
+
+  /* 封面是三段包封（封底 48% | 书腰 4% | 封面 48%）；
+     其余内页都是整幅插画，左右严格各占 50%，跨页才能严丝合缝。 */
+  var COVER_SLUG = PLATES[0].slug;
+  function coverWOf(plate) {
+    return (plate && plate.slug === COVER_SLUG) ? 0.48 : 0.5;
+  }
+  /* 对应的背景缩放：封面 208.334%，内页 200% */
+  function pageScaleOf(plate) {
+    return (plate && plate.slug === COVER_SLUG) ? '208.334% 100%' : '200% 100%';
+  }
+
   /* 构建一次卷曲：front = 叶片正面（最终落在右页），back = 背面（起始在左页） */
   function buildCurl(frontPlate, backPlate, dir) {
     leaf.textContent = '';
@@ -61,29 +91,41 @@
 
     var bw = book.clientWidth || 1200;      /* 整本书宽（跨页） */
     var pageW = bw * 0.5;                    /* 单页宽 = 书宽一半 */
-    var gut = pageW;                         /* 书脊位置 */
-    var sw = pageW / NSTRIP;                 /* 每条 strip 宽 */
+    /* 只有「封面」那张是三段包封：封底 | 书腰 | 封面，两侧各 48%；
+       内页是整幅插画，必须严格左右各半，否则跨页中线会错开。 */
+    var fw = coverWOf(frontPlate);
+    var bwd = coverWOf(backPlate);
+    var Sf = pageW / fw;                     /* front 图的显示宽度 */
+    var Sb = pageW / bwd;                    /* back 图的显示宽度 */
+    var frontStart = Sf * (1 - fw);          /* 封面左沿在整幅图上的位置 */
+    var backEnd = Sb * bwd;                  /* 封底右沿 */
     var fsrc = 'assets/images/' + frontPlate.slug + '.jpg';
     var bsrc = 'assets/images/' + backPlate.slug + '.jpg';
+
+    /* 用整数像素切分：每条边界都落在整像素上，消除亚像素接缝
+       （小数宽度会让相邻两条的边缘落在半个像素上，转起来会闪） */
+    var xs = [];
+    for (var k = 0; k <= NSTRIP; k++) xs.push(Math.round(k * pageW / NSTRIP));
 
     var c = el('div', 'curl');
     var host = c;
 
     for (var i = 0; i < NSTRIP; i++) {
+      var x0 = xs[i], x1 = xs[i + 1];
       var s = el('div', 'strip');
-      s.style.width = sw + 'px';
+      s.style.width = (x1 - x0) + 'px';
 
       var f = el('div', 'face front');
       f.style.backgroundImage = 'url("' + fsrc + '")';
-      f.style.backgroundSize = bw + 'px auto';
-      /* 正面：显示 front 图的「右半」第 i 条 —— 从书脊向右数 */
-      f.style.backgroundPositionX = (-(gut + i * sw)).toFixed(2) + 'px';
+      f.style.backgroundSize = Sf + 'px 100%';
+      /* 正面：显示 front 图的「封面」那一侧第 i 条 */
+      f.style.backgroundPositionX = (-(frontStart + x0)) + 'px';
 
       var b = el('div', 'face back');
       b.style.backgroundImage = 'url("' + bsrc + '")';
-      b.style.backgroundSize = bw + 'px auto';
-      /* 背面：显示 back 图的「左半」第 i 条（翻转镜像，公式同 mengto） */
-      b.style.backgroundPositionX = ((i + 1) * sw - gut).toFixed(2) + 'px';
+      b.style.backgroundSize = Sb + 'px 100%';
+      /* 背面：显示 back 图的「封底」那一侧第 i 条（翻转镜像） */
+      b.style.backgroundPositionX = (x1 - backEnd) + 'px';
 
       var shF = el('i', 'sh'), glF = el('i', 'gl');
       var shB = el('i', 'sh'), glB = el('i', 'gl');
@@ -96,8 +138,10 @@
       s.appendChild(b);
       host.appendChild(s);
       host = s;                              /* 链式嵌套：下一条套在这一条里 */
-      s._sh = [shF, shB];                    /* 缓存引用，逐帧只改透明度 */
+      s._sh = [shF, shB];
       s._gl = [glF, glB];
+      s._f = f;                              /* 正/反面也缓存，逐帧控制可见性 */
+      s._b = b;
       strips.push(s);
     }
 
@@ -125,19 +169,39 @@
     curlEl.style.setProperty('--tt', (tt * RAD).toFixed(2) + 'deg');
     curlEl.style.setProperty('--td', (td * RAD).toFixed(3) + 'deg');
 
-    /* 被翻页压在下方的阴影：跟着抬起量一起长、一起消 */
-    if (shadeR) shadeR.style.opacity = (curlDir === 1 ? lift * 0.62 : 0).toFixed(3);
-    if (shadeL) shadeL.style.opacity = (curlDir === -1 ? lift * 0.62 : 0).toFixed(3);
+    /* 书页上的那块「跟页翻动」的阴影：按要求去掉动画，
+       固定保留完成态（= 不显示），中间的页缝阴影由 .gutter 常驻 */
+    if (shadeR) shadeR.style.opacity = '0';
+    if (shadeL) shadeL.style.opacity = '0';
 
-    /* 逐条明暗：只改 opacity（合成层操作），不触碰渐变/布局，
-       这样每帧没有重绘，翻页才顺 */
+    /* 逐条明暗：用「两端不同」的渐变，
+       相邻切片共享边界值 → 整张叶子上的明暗是连续的，
+       不会在每条接缝处各压一道暗边（那就是之前的折痕） */
     for (var i = 0; i < NSTRIP; i++) {
-      var l1 = Math.abs(Math.cos(tt - i * td));
-      var shade = ((1 - l1) * 0.85).toFixed(3);
-      var glow = (l1 * l1 * 0.20 * lift).toFixed(3);
+      var l1 = Math.abs(Math.cos(tt - i * td));        /* 本条的近边朝向 */
+      var l2 = Math.abs(Math.cos(tt - (i + 1) * td));  /* 远边朝向 */
       var s = strips[i];
-      if (s._sh) { s._sh[0].style.opacity = shade; s._sh[1].style.opacity = shade; }
-      if (s._gl) { s._gl[0].style.opacity = glow; s._gl[1].style.opacity = glow; }
+      if (!s._sh) continue;
+
+      /* 只让「朝向观众」的那一面显示：彻底杜绝透出反面，
+         同时少渲染一半的层，翻页更稳。±0.06 的窗口让两面在
+         正侧身时短暂共存，避免出现一条透明缝隙。 */
+      var c = Math.cos(tt - i * td);
+      if (s._f) s._f.style.visibility = (c > -0.02) ? 'visible' : 'hidden';
+      if (s._b) s._b.style.visibility = (c < 0.02) ? 'visible' : 'hidden';
+
+      var a1 = ((1 - l1) * 0.55 * lift).toFixed(3);
+      var a2 = ((1 - l2) * 0.55 * lift).toFixed(3);
+      var g1 = (l1 * l1 * 0.16 * lift).toFixed(3);
+      var g2 = (l2 * l2 * 0.16 * lift).toFixed(3);
+
+      var sh0 = s._sh[0].style, sh1 = s._sh[1].style;
+      sh0.setProperty('--a1', a1); sh0.setProperty('--a2', a2);
+      sh1.setProperty('--a1', a1); sh1.setProperty('--a2', a2);
+
+      var gl0 = s._gl[0].style, gl1 = s._gl[1].style;
+      gl0.setProperty('--g1', g1); gl0.setProperty('--g2', g2);
+      gl1.setProperty('--g1', g1); gl1.setProperty('--g2', g2);
     }
   }
 
@@ -162,21 +226,46 @@
   function plateIdx(i) { return (i === 0 || i === N) ? 0 : i; }  /* 封面/封底共用封面图 */
 
   /* ---------- 画一页 ---------- */
+  var loadedSrc = {};      /* 已经解码过的图，换页时直接切，不再淡入 */
+
   function paint(el, plate) {
     if (!el) return;
     var img = el.querySelector('.page__img');
     if (el.dataset.plate !== plate.slug) el.dataset.plate = plate.slug;
-    if (img && img.dataset.src !== plate.slug) {
-      img.dataset.src = plate.slug;
-      img.classList.remove('is-ready');
-      var src = 'assets/images/' + plate.slug + '.jpg';
-      var probe = new Image();
-      probe.onload = function () {
-        img.style.backgroundImage = 'url("' + src + '")';
-        img.classList.add('is-ready');
-      };
-      probe.src = src;
+    if (!img) return;
+
+    var bw = book.clientWidth || 1200;
+    var pageW = bw * 0.5;
+    var cw = coverWOf(plate);
+    var S = pageW / cw;
+    var posX = (el === pageL) ? 0 : -(S * (1 - cw));
+    var src = 'assets/images/' + plate.slug + '.jpg';
+    var size = S + 'px 100%';
+    var pos = posX + 'px 0';
+    el.style.backgroundSize = size;
+    el.style.backgroundPosition = pos;
+    img.style.backgroundSize = size;
+    img.style.backgroundPosition = pos;
+
+    if (img.dataset.src === src) return;
+    img.dataset.src = src;
+
+    /* 图已经在缓存里 → 同步换图并保持不透明。
+       否则会出现「叶片消失 + 新图还在淡入」的几帧模糊，看着像跳一下。 */
+    if (loadedSrc[src]) {
+      img.style.backgroundImage = 'url("' + src + '")';
+      img.classList.add('is-ready');
+      return;
     }
+
+    img.classList.remove('is-ready');
+    var probe = new Image();
+    probe.onload = function () {
+      loadedSrc[src] = true;
+      img.style.backgroundImage = 'url("' + src + '")';
+      img.classList.add('is-ready');
+    };
+    probe.src = src;
   }
 
   /* ---------- 环境光取色（不依赖情绪，只改背景色） ---------- */
@@ -192,16 +281,21 @@
   }
 
   /* ---------- 同步 UI ---------- */
+  /* 跳页过程中，水滴指示器直接指向最终目标，
+     不跟着中间那次翻页来回跳（否则会闪一下中间页） */
+  var uiOverride = null;
+
   function syncUI() {
-    var atStart = idx === 0;
-    var atEnd = idx === N;
+    var shown = uiOverride === null ? idx : uiOverride;
+    var atStart = shown === 0;
+    var atEnd = shown === N;
     if (btnPrev) btnPrev.disabled = atStart;
     if (btnNext) btnNext.disabled = atEnd;
     book.classList.toggle('is-open', isOpen(idx));
     if (dotsEl) {
       [].forEach.call(dotsEl.children, function (b, i) {
-        b.classList.toggle('is-on', i === idx);
-        b.setAttribute('aria-selected', i === idx ? 'true' : 'false');
+        b.classList.toggle('is-on', i === shown);
+        b.setAttribute('aria-selected', i === shown ? 'true' : 'false');
       });
     }
   }
@@ -223,15 +317,21 @@
   /* =========================================================
      翻页
      ========================================================= */
-  function animateTurn(to) {
+  function animateTurn(to, msOverride, onDone, noFade) {
     if (turning) return false;
     var forward = to > idx;
     var from = idx;
-    var ms = turnMs();
+    var ms = msOverride || turnMs();
     turning = true;
+    /* 作废上一页遗留的「淡出后隐藏叶片」定时器，
+       否则连翻时它会把新叶片直接藏掉（第二段就没有动画了） */
+    leafToken++;
 
     var fromP = plateIdx(from);
     var toP = plateIdx(to);
+
+    /* 水滴指示器在翻页「开始」就切到目标（原先要等落定后才动） */
+    if (uiOverride === null) { uiOverride = to; syncUI(); }
 
     /* 背景色切换与翻页同时开始（而非等翻完） */
     palette(to);
@@ -247,20 +347,34 @@
     leaf.hidden = false;
     applyCurl(forward ? 0 : 1);        /* 反向：叶片从左侧开始 */
 
-    /* ---- 封面/封底 的收窄、展宽、隐藏单页 ---- */
-    if (to === 0) {              /* 合到前封面：左页淡出，书左移收窄 */
-      pageL.style.transition = 'opacity .5s ease';
+    /* ---- 封面/封底 的收窄、展宽、隐藏单页 ----
+       回到已验证可用的做法：开书时单页直接隐藏，不做衬页/裁剪，
+       避免把封底画到左边、把封面画到右边。 */
+    if (to === 0) {              /* 合到前封面：左页立刻消失（封面之前什么都没有） */
+      pageL.style.transition = 'opacity .12s linear';
       book.classList.add('is-closed');
       book.classList.remove('is-closed-back');
-    } else if (to === N) {       /* 合到封底：右页淡出，书右移收窄 */
-      pageR.style.transition = 'opacity .5s ease';
+      if (pageblockEl) { pageblockEl.style.transition = 'none'; pageblockEl.style.opacity = '0'; }
+    } else if (to === N) {       /* 合到封底：右页立刻消失 */
+      pageR.style.transition = 'opacity .12s linear';
       book.classList.add('is-closed-back');
       book.classList.remove('is-closed');
-    } else if (from === 0) {     /* 从前封面打开：左页先隐，书右移展宽 */
+      if (pageblockEl) { pageblockEl.style.transition = 'none'; pageblockEl.style.opacity = '0'; }
+    } else if (from === 0) {     /* 从前封面打开：左页先隐，书右移展宽（此分支保持 115 轮行为，不动） */
+      if (spineNode) spineNode.style.opacity = '0';   /* 一开始翻动就让书腰退场，别露在页面下 */
+      if (pageblockEl) { pageblockEl.style.transition = 'none'; pageblockEl.style.opacity = '0'; }
       pageL.style.transition = 'none';
       pageL.style.opacity = '0';
       book.classList.remove('is-closed');
     } else if (from === N) {     /* 从封底打开：右页先隐，书左移展宽 */
+      if (spineNode) spineNode.style.opacity = '0';
+      if (stackR) stackR.style.opacity = '0';   /* 右缘白条整段隐藏，避免跟着书「滑进来」 */
+      if (pageblockEl) {
+        pageblockEl.style.transition = 'none';
+        pageblockEl.style.left = '-5px';
+        pageblockEl.style.right = 'calc(50% - var(--spine-w, 3.9%))';
+        pageblockEl.style.opacity = '1';
+      }
       pageR.style.transition = 'none';
       pageR.style.opacity = '0';
       book.classList.remove('is-closed-back');
@@ -268,11 +382,43 @@
 
     /* ---- 用 rAF 驱动卷曲翻页 ---- */
     var start = null;
+    var closing = false;
     function step(ts) {
       if (start === null) start = ts;
       var t = Math.min(1, (ts - start) / ms);
       var eased = easeInOut(t);
       applyCurl(forward ? eased : 1 - eased);
+
+
+
+
+      /* 合上方向：厚度层从一开始就随进度显形，60% 进度就到满，
+         不再等到落定那一帧才出现 */
+      if ((to === 0 || to === N) && pageblockEl) {
+        var pv = Math.min(1, eased / 0.60);
+        pageblockEl.style.opacity = pv.toFixed(3);
+      }
+
+      /* 收书：等叶片完全盖住左页（96%）再瞬时收起，
+         全程不透明，不会看到页面的淡出过程。 */
+      if (to === 0 && !closing && eased > 0.96) {
+        closing = true;
+        pageL.style.opacity = '0';
+      }
+      if (to === N && !closing && eased > 0.96) {
+        closing = true;
+        pageR.style.opacity = '0';
+      }
+
+      /* 厚度层只在「完全合上」之后才由 CSS 显示；
+         翻页过程中一律隐藏，避免它被带到书页中间/书外。 */
+
+      /* 叶片全程保持不透明：不做任何淡出，避免翻页时画面「消失」。 */
+      if (leaf.style.opacity !== '') leaf.style.opacity = '';
+
+      /* 书缝竖带跟着翻页进度淡入：翻到多少就出现多少，
+         落定那一刻正好是 1，不会「啪」地暗下去。 */
+
       if (t < 1) { requestAnimationFrame(step); }
       else { finishTurn(); }
     }
@@ -286,16 +432,34 @@
       pageR.style.transition = '';
       pageL.style.opacity = '';
       pageR.style.opacity = '';
+      /* 硬保证：合上封底时右页必须彻底消失（最后一页之后没有任何东西），
+         合上封面时左页同理 —— 不受之前内联样式残留影响 */
+      if (idx === N) pageR.style.opacity = '0';
+      else if (idx === 0) pageL.style.opacity = '0';
+      pageL.style.clipPath = '';
+      pageR.style.clipPath = '';
+      if (spineNode) spineNode.style.opacity = '';   /* 交还 CSS：翻完之后书腰才淡出 */
+      if (pageblockEl) { pageblockEl.style.transition = ''; pageblockEl.style.opacity = ''; pageblockEl.style.left = ''; pageblockEl.style.right = ''; }  /* 落定后交还 CSS */
+      if (stackR) stackR.style.opacity = '';   /* 落定后白条交还 CSS */
+      clearInsideCover(pageL);      /* 衬页还原成正常页面 */
+      clearInsideCover(pageR);
       book.classList.remove('is-collapsing');
+      /* 方案 B：叶片上已经烘焙了同样的书缝阴影，
+         所以落定时直接撤掉叶片即可，两侧明暗一致、不会有硬跳。 */
+      leafToken++;
       leaf.hidden = true;
       leaf.textContent = '';
+      leaf.style.opacity = '';
+      leaf.style.transition = '';
       curlEl = null;
       strips = [];
       if (shadeL) shadeL.style.opacity = '0';
       if (shadeR) shadeR.style.opacity = '0';
       turning = false;
+      uiOverride = chainFinal;   /* 连翻时仍锁在最终目标，否则水滴会跳回中间页 */
       syncUI();
       preload(1); preload(-1);
+      if (onDone) onDone();
     }
 
     return true;
@@ -414,13 +578,30 @@
     book.classList.add('is-dragging');
 
     if (from === 0) {
+      if (stackR) stackR.style.opacity = '0';   /* 拖拽打开时白条也整段隐藏 */
+      if (spineNode) spineNode.style.opacity = '0';
       pageL.style.transition = 'none';
       pageL.style.opacity = '0';
       book.classList.remove('is-closed');
     } else if (from === N) {
+      if (stackR) stackR.style.opacity = '0';
+      if (spineNode) spineNode.style.opacity = '0';
       pageR.style.transition = 'none';
       pageR.style.opacity = '0';
       book.classList.remove('is-closed-back');
+    }
+
+    /* 反向拖动「收书」：翻开状态下的那一页必须在拖动一开始就退场。
+       否则手拖时卷页已经翻走，左边/右边却还留着一整页旧内容
+       （点按钮时是靠 is-closed 立刻淡出的，所以按钮路径不会出现） */
+    if (to === 0) {
+      if (stackR) stackR.style.opacity = '0';
+      pageL.style.transition = 'opacity .12s linear';
+      pageL.style.opacity = '0';
+    } else if (to === N) {
+      if (stackR) stackR.style.opacity = '0';
+      pageR.style.transition = 'opacity .12s linear';
+      pageR.style.opacity = '0';
     }
   }
 
@@ -435,7 +616,13 @@
     if (fromPose === undefined || fromPose === null) fromPose = 0.32;
     book.classList.remove('is-dragging');
     turning = true;
+    if (uiOverride === null) { uiOverride = to; syncUI(); }
     palette(to);            /* 背景色随拖拽完成同时切换 */
+
+    /* 收书时立刻切换合上状态：书脊压痕会跟着这段动画一起淡入，
+       而不是等落定后才「啪」地出现 */
+    if (to === 0) { book.classList.add('is-closed'); book.classList.remove('is-closed-back'); }
+    else if (to === N) { book.classList.add('is-closed-back'); book.classList.remove('is-closed'); }
 
     var start = null;
     function step(ts) {
@@ -465,10 +652,19 @@
       pageR.style.transition = '';
       pageL.style.opacity = '';
       pageR.style.opacity = '';
+      /* 硬保证：合上封底时右页必须彻底消失（最后一页之后没有任何东西），
+         合上封面时左页同理 —— 不受之前内联样式残留影响 */
+      if (idx === N) pageR.style.opacity = '0';
+      else if (idx === 0) pageL.style.opacity = '0';
+      pageL.style.clipPath = '';
+      pageR.style.clipPath = '';
+      if (spineNode) spineNode.style.opacity = '';
       book.classList.remove('is-collapsing');
       if (shadeL) shadeL.style.opacity = 0;
       if (shadeR) shadeR.style.opacity = 0;
       turning = false;
+      if (stackR) stackR.style.opacity = '';   /* 拖拽落定后白条交还 CSS */
+      uiOverride = null;      /* 落定后交还给真实页号 */
       syncUI();
       preload(1); preload(-1);
     }
@@ -501,6 +697,19 @@
       pageR.style.transition = '';
       pageL.style.opacity = '';
       pageR.style.opacity = '';
+      /* 硬保证：合上封底时右页必须彻底消失（最后一页之后没有任何东西），
+         合上封面时左页同理 —— 不受之前内联样式残留影响 */
+      if (idx === N) pageR.style.opacity = '0';
+      else if (idx === 0) pageL.style.opacity = '0';
+      pageL.style.clipPath = '';
+      pageR.style.clipPath = '';
+      if (spineNode) spineNode.style.opacity = '';   /* 回退时书腰照常显示 */
+      if (stackR) stackR.style.opacity = '';         /* 回退时白条交还 CSS */
+      /* 拖到一半松手回退：把两页还原成本来那一页。
+         否则右页还留着拖拽开始时预画的「下一页」。 */
+      var cur = PLATES[plateIdx(idx)];
+      paint(pageL, cur);
+      paint(pageR, cur);
       book.classList.remove('is-collapsing');
       if (idx === 0) book.classList.add('is-closed');
       else if (idx === N) book.classList.add('is-closed-back');
@@ -534,7 +743,7 @@
     for (var r = 0; r < drops; r++) {
       var d = document.createElement('i');
       d.style.left = (Math.random() * 100).toFixed(2) + '%';
-      d.style.animationDuration = (0.75 + Math.random() * 0.95).toFixed(2) + 's';
+      d.style.animationDuration = (1.80 + Math.random() * 1.40).toFixed(2) + 's';   /* 落雨更慢一些 */
       d.style.animationDelay = (-Math.random() * 2).toFixed(2) + 's';
       d.style.height = (8 + Math.random() * 18).toFixed(0) + 'px';
       d.style.opacity = (0.22 + Math.random() * 0.45).toFixed(2);
@@ -545,26 +754,43 @@
   function jump(k) {
     if (turning) return;
     if (k === idx) return;
+    if (k < 0) k = 0;
+    if (k > N) k = N;
 
-    /* 相邻 → 翻页动画 */
-    if (Math.abs(k - idx) === 1) { animateTurn(k); return; }
+    /* 封面 ↔ 封底：先把封面翻开到相邻那一页（有个「开书」的动作），
+       再直接翻到另一端。水滴指示器则直接跳到最终目标，不跟着中间页闪。
+       其余跳转：一次翻到位，不显示中间页。 */
+    if (idx === 0 && k === N) { chainTurn([1, N], k); return; }
+    if (idx === N && k === 0) { chainTurn([N - 1, 0], k); return; }
 
-    /* 远距离 → 直接切换 + 轻微呼吸 */
-    idx = k;
-    paint(pageL, PLATES[plateIdx(k)]);
-    paint(pageR, PLATES[plateIdx(k)]);
-    palette(k);
-    book.classList.toggle('is-closed', k === 0);
-    book.classList.toggle('is-closed-back', k === N);
-    pageL.style.transition = '';
-    pageR.style.transition = '';
-    pageL.style.opacity = '';
-    pageR.style.opacity = '';
+    animateTurn(k);
+  }
+
+  /* 连续两次翻页，期间水滴锁定在最终目标上。
+     两段之间不留停顿：第一段一落定立刻接第二段，且每段更短。 */
+  function chainTurn(list, finalTarget) {
+    chainFinal = finalTarget;
+    uiOverride = finalTarget;
     syncUI();
-    book.classList.remove('is-dragging');
-    book.classList.add('is-flash');
-    setTimeout(function () { book.classList.remove('is-flash'); }, 260);
-    preload(1); preload(-1);
+
+    /* 从封面直达封底：中途书是摊开的，厚度层会被 CSS 隐藏，
+       看起来「书突然变薄了」。这里让它全程保持可见。 */
+    /* 封面直达封底时书会摊开，两半厚度都该在（CSS 用 is-open 已处理） */
+
+    var each = Math.max(260, Math.round(turnMs() * 0.42));
+    var i = 0;
+    function step() {
+      while (i < list.length && list[i] === idx) i++;
+      if (i >= list.length) {
+        chainFinal = null;
+        uiOverride = null;
+
+        syncUI();
+        return;
+      }
+      animateTurn(list[i++], each, step, true);   /* 两段连着放，中间不淡出 */
+    }
+    step();
   }
 
   /* =========================================================
@@ -576,6 +802,9 @@
     else if (e.key === 'Home') { e.preventDefault(); jump(0); }
     else if (e.key === 'End') { e.preventDefault(); jump(N); }
   });
+
+  var leafToken = 0;      /* 叶片淡出的令牌，防止连翻时误伤新叶片 */
+  var chainFinal = null;  /* 连翻（封面↔封底）时水滴要停在的最终目标 */
 
   var wheelLock = 0;
   window.addEventListener('wheel', function (e) {
@@ -614,14 +843,34 @@
       dismissRotate();
     }, true);
 
-    /* 真机上真的转成横屏后重置：退出伪装横屏，回到竖屏会再次提示 */
-    var mqLandscape = window.matchMedia('(orientation: landscape)');
-    var onOrientation = function (ev) {
-      if (ev.matches) {
+    /* 用「实际宽 > 高」判断横屏，而不是只信 orientation 媒体查询：
+       部分手机（尤其 iOS）翻屏时该事件不触发或滞后，
+       会导致提示层不消失 / 伪装横屏退不出来。 */
+    function isLandscape() { return window.innerWidth > window.innerHeight; }
+
+    function syncOrientation() {
+      var land = isLandscape();
+      document.body.classList.toggle('is-landscape', land);
+      if (land) {
         rotateEl.classList.remove('is-off');
         document.body.classList.remove('is-flipland');
       }
-    };
+    }
+
+    syncOrientation();
+    window.addEventListener('resize', syncOrientation);
+    window.addEventListener('orientationchange', function () {
+      syncOrientation();
+      setTimeout(syncOrientation, 120);
+      setTimeout(syncOrientation, 400);
+    });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', syncOrientation);
+    }
+
+    /* 兼容旧路径：orientation 媒体查询变化时也同步一次 */
+    var mqLandscape = window.matchMedia('(orientation: landscape)');
+    var onOrientation = function () { syncOrientation(); };
     if (mqLandscape.addEventListener) mqLandscape.addEventListener('change', onOrientation);
     else if (mqLandscape.addListener) mqLandscape.addListener(onOrientation);
 
@@ -655,6 +904,15 @@
     y = Math.max(0, Math.min(100, y));
     book.style.setProperty('--sx', x + '%');
     book.style.setProperty('--sy', y + '%');
+
+    /* 书本随指针做 3D 倾斜：像被托在手里转动。
+       上下移动给前后俯仰，左右移动给水平旋转；越靠上抬得越高。 */
+    var rx = ((y - 50) / 50) * -9;
+    var ry = ((x - 50) / 50) * 11;
+    book.style.setProperty('--rx', rx.toFixed(2) + 'deg');
+    book.style.setProperty('--ry', ry.toFixed(2) + 'deg');
+    book.style.setProperty('--lift', (-6 - (1 - y / 100) * 6).toFixed(2) + 'px');
+
     if (book.classList.contains('is-closed') || book.classList.contains('is-closed-back')) {
       book.classList.toggle('is-hover', onVisiblePage(e));
     }
@@ -666,20 +924,109 @@
   book.addEventListener('pointermove', onBookMove);
   book.addEventListener('pointerleave', function () {
     book.classList.remove('is-hover');
+    book.style.setProperty('--rx', '0deg');
+    book.style.setProperty('--ry', '0deg');
   });
+
+  /* ---------- 手机：没有鼠标，用设备摇摆来转动书 ---------- */
+  var motionBound = false;
+  function bindMotion() {
+    if (motionBound) return;
+    motionBound = true;
+    window.addEventListener('deviceorientation', function (e) {
+      if (e.gamma == null && e.beta == null) return;
+      var g = Math.max(-40, Math.min(40, e.gamma || 0));        /* 左右倾斜 */
+      var b = Math.max(-40, Math.min(40, (e.beta || 0) - 40));  /* 前后倾斜，40° 为手持基准 */
+      book.style.setProperty('--ry', (g / 40 * 9).toFixed(2) + 'deg');
+      book.style.setProperty('--rx', (-b / 40 * 6).toFixed(2) + 'deg');
+    }, true);
+  }
+
+  if (window.matchMedia('(hover:none)').matches) {
+    var DOE = window.DeviceOrientationEvent;
+    if (DOE && typeof DOE.requestPermission === 'function') {
+      /* iOS 13+ 需要用户手势授权 */
+      book.addEventListener('pointerdown', function once() {
+        book.removeEventListener('pointerdown', once);
+        DOE.requestPermission().then(function (s) { if (s === 'granted') bindMotion(); }).catch(function () {});
+      });
+    } else if (DOE) {
+      bindMotion();     /* Android 等直接可用 */
+    }
+  }
 
   /* =========================================================
      初始化
      ========================================================= */
+  /* 书腰直接使用封面图中间那条真实画面（竖排书名所在处） */
+  var pageblockEl = $('#pageblock');
+  var spineNode = $('#spine');
+  var gutterEl = document.querySelector('.gutter');
+  var stackR = document.querySelector('.stack--r');
+
+  function setupSpine() {
+    var spineEl = $('#spine');
+    if (!spineEl) return;
+    spineEl.style.backgroundImage = 'url("assets/images/' + PLATES[0].slug + '.jpg")';
+  }
+
+  /* 预加载整本书：全部下载完再放行，翻页时就不会卡在取图/解码上 */
+  var loadingEl = $('#loading');
+  var loadFill = $('#loadFill');
+
+  function preloadAll(onDone) {
+    var total = PLATES.length, n = 0, finished = false;
+    var t0 = Date.now();
+
+    function finish() {
+      if (finished) return;
+      finished = true;
+      if (loadFill) loadFill.style.width = '100%';
+      /* 太快时也留一小会儿，避免“一闪而过” */
+      var wait = Math.max(0, 420 - (Date.now() - t0)) + 200;
+      setTimeout(onDone, wait);
+    }
+    function tick() {
+      n++;
+      if (loadFill) loadFill.style.width = Math.min(100, Math.round(n / total * 100)) + '%';
+      if (n >= total) finish();
+    }
+
+    if (!total) { finish(); return; }
+    if (loadFill) loadFill.style.width = '3%';   /* 一开始就有进度，不是空条 */
+
+    PLATES.forEach(function (p) {
+      preloadCache[p.slug] = true;      /* 之后按页预载就不会重复请求 */
+      var src = 'assets/images/' + p.slug + '.jpg';
+      var im = new Image();
+      im.onload = function () {
+        loadedSrc[src] = true;          /* 预载过的图，翻页时直接切、不淡入 */
+        if (im.decode) im.decode().catch(function () {});
+        tick();
+      };
+      im.onerror = tick;                /* 失败也算完成，不能卡住 */
+      im.src = src;
+    });
+
+    /* 兜底：网络异常时最多等 30 秒 */
+    setTimeout(finish, 30000);
+  }
+
   function init() {
+    book.classList.add('is-booting');   /* 先关掉过渡，避免开场从右往左滑进来 */
     book.classList.add('is-closed');
     paint(pageR, PLATES[0]);      /* 前封面 = 封面图右半 */
     paint(pageL, PLATES[0]);
     palette(0);
     syncUI();
+    setupSpine();
 
-    [0, 1, 2].forEach(function (i) {
-      if (PLATES[i]) { var im = new Image(); im.src = 'assets/images/' + PLATES[i].slug + '.jpg'; }
+    preloadAll(function () {
+      if (loadingEl) loadingEl.classList.add('is-done');
+      /* 预加载结束后，书从后方淡入到前方 */
+      book.classList.remove('is-booting');
+      book.classList.add('is-entering');
+      setTimeout(function () { book.classList.remove('is-entering'); }, 1100);
     });
 
     setTimeout(function () {
