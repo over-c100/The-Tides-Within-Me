@@ -821,6 +821,16 @@
      ========================================================= */
   var rotateEl = $('#rotate');
   var rotateTimer = 0;                  /* 「请把手机横过来」的自动收起倒计时 */
+
+  /* 提示层此刻是否真的在屏幕上。收起后 display 仍是 grid（为了渐隐），
+     所以要用「classList + 可见性」判断，不能只看 display。 */
+  function isRotateShowing() {
+    if (!rotateEl) return false;
+    if (rotateEl.classList.contains('is-off')) return false;
+    var cs = getComputedStyle(rotateEl);
+    return cs.display !== 'none' && cs.visibility !== 'hidden';
+  }
+
   if (rotateEl) {
     var isPortrait = function () { return window.innerHeight > window.innerWidth; };
 
@@ -839,7 +849,7 @@
 
     /* 提示还在时，先吃掉按键，避免顺手翻了页 */
     document.addEventListener('keydown', function (e) {
-      if (getComputedStyle(rotateEl).display === 'none') return;
+      if (!isRotateShowing()) return;
       e.preventDefault();
       e.stopPropagation();
       dismissRotate();
@@ -1056,10 +1066,10 @@
       /* 竖屏：加载条走完了才亮出「请把手机横过来」，
          停留 2.7 秒后自动收起（等同于用户自己点了一下） */
       document.body.classList.add('is-ready');
-      if (rotateEl && getComputedStyle(rotateEl).display !== 'none') {
+      if (isRotateShowing()) {
         rotateTimer = setTimeout(function () {
           rotateTimer = 0;
-          if (getComputedStyle(rotateEl).display === 'none') return;
+          if (!isRotateShowing()) return;
           dismissRotate();
         }, 2700);
       }

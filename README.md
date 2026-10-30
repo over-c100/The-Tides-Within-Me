@@ -2,10 +2,8 @@
 
 - 在线预览：<https://over-c100.github.io/The-Tides-Within-Me/>
 - 图/文作者：**香菜洗衣机**
-
-- 使用Deepseek v4.1制作 
+- 使用 Deepseek v4.1 制作
 - 技术：Mesh Gradient + Glassmorphism + CSS 3D 书页卷曲
-
 
 ## 版权声明
 

@@ -138,6 +138,9 @@ body{
 .book{
   position:relative;
   width:var(--bw);
+  /* 比例写死：高度直接由 --bw / --ratio 算出，不依赖 aspect-ratio 的「建议高度」，
+     这样任何子元素都不可能把书撑变形（旋屏、旋转态、加载中都不会走样） */
+  height:calc(var(--bw) / var(--ratio));
   aspect-ratio:var(--ratio);
   transform-style:preserve-3d;
   /* 位移（合上/摊开）用 translate，跟随 --turn；
@@ -614,6 +617,11 @@ body{
   touch-action:none;
   overflow:hidden;
   cursor:pointer;
+  /* 收起时是渐隐，不是「啪」地消失：
+     grid/none 切不了动画，所以收起只改不透明度 + 可见性，display 保持 grid */
+  opacity:1;
+  visibility:visible;
+  transition:opacity .52s ease, visibility .52s ease;
 }
 .rotate__ring{
   position:absolute; left:50%; top:50%;
@@ -653,6 +661,25 @@ body{
   44%, 62%  { transform:rotate(-90deg); }
   90%, 100% { transform:rotate(0deg); }
 }
+/* 底部一行小字：点哪儿都能关（整层就是按钮，这行只是说明） */
+.rotate__tip{
+  position:absolute; left:50%; bottom:15%;
+  transform:translateX(-50%);
+  font-family:system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB",
+              "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  font-size:13px; font-weight:400;
+  letter-spacing:.16em; text-indent:.16em;   /* 字间距让居中不偏 */
+  color:rgba(244,241,234,.62);
+  white-space:nowrap;
+  pointer-events:none;
+  text-shadow:0 2px 14px rgba(0,0,0,.65);
+  animation:tipPulse 3.2s ease-in-out infinite;   /* 与圆环同频，一起呼吸 */
+}
+@keyframes tipPulse{
+  0%, 100%{ opacity:.50; }
+  50%     { opacity:.88; }
+}
+
 @keyframes ringPulse{
   0%, 100%{ opacity:.28; transform:scale(.96); }
   50%     { opacity:.62; transform:scale(1.04); }
@@ -662,14 +689,20 @@ body{
    否则会和加载条抢同一块屏幕 */
 @media (orientation:portrait) and (max-width:1100px){
   body.is-ready .rotate{ display:grid; }
-  /* 收起后必须真的收起来：上面那条带 body 前缀，权重比 .rotate.is-off 高 */
-  body.is-ready .rotate.is-off{ display:none; }
 }
-/* 只要实际是横屏（宽>高），一律不显示提示层 —— 以 JS 判断为准 */
+/* 只要实际是横屏（宽>高），一律不显示提示层 —— 以 JS 判断为准
+   （这条是「根本不该出现」，所以直接 display:none，不需要动画） */
 body.is-landscape .rotate{ display:none; }
 
-/* 点一下 = 当作已把手机横过来：收起提示，露出书页 */
-.rotate.is-off{ display:none; }
+/* 点一下 / 2.7 秒自动：收起提示层。
+   这里不能再用 display:none，否则渐隐动画会被直接掐掉；
+   改成透明 + visibility（visibility 会等到过渡结束才真正隐藏）。 */
+.rotate.is-off{
+  opacity:0;
+  visibility:hidden;
+  pointer-events:none;
+  cursor:default;
+}
 
 /* =========================================================
    两种显示模式，互相独立
@@ -704,11 +737,10 @@ body.is-flipland .weather{
 /* 进度条：竖屏模式下要显示（否则会被窄屏规则隐藏） */
 body.is-flipland .dots{ display:flex; }
 
-/* 竖屏旋转态：厚度条、页堆这些「贴边装饰」转 90° 后会横穿书页，
-   变成一条白带，所以在这个模式下直接隐藏，只保留书本身。 */
-body.is-flipland .pageblock,
-body.is-flipland .stack--r,
-body.is-flipland .stack--l{ display:none; }
+/* 竖屏旋转态：厚度层、页堆照常显示。
+   整个舞台转了 90°，这些「贴边装饰」会跟着贴到旋转后的边上，
+   表现和横屏时一致（书页在封面上下露出白边、书脊变成顶部那块斜面）。
+   之前这里把三样都 display:none，所以竖屏看书是「没有厚度」的。 */
 
 /* =========================================================
    降级
