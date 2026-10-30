@@ -820,10 +820,12 @@
      （电脑没有陀螺仪时也能看到横屏后的画面）
      ========================================================= */
   var rotateEl = $('#rotate');
+  var rotateTimer = 0;                  /* 「请把手机横过来」的自动收起倒计时 */
   if (rotateEl) {
     var isPortrait = function () { return window.innerHeight > window.innerWidth; };
 
     var dismissRotate = function () {
+      if (rotateTimer) { clearTimeout(rotateTimer); rotateTimer = 0; }
       rotateEl.classList.add('is-off');
       /* 视口还是竖的 → 把整页转 90° 铺满，绘本长边贴满手机长边 */
       if (isPortrait()) document.body.classList.add('is-flipland');
@@ -880,6 +882,29 @@
         document.body.classList.remove('is-flipland');
       }
     });
+  }
+
+  /* =========================================================
+     尺寸变化后重画页面
+     ---------------------------------------------------------
+     页面的 background-size 是「按当前书宽算好的 px + 100% 高」。
+     书宽一旦变（旋屏、点掉提示进竖屏旋转态 is-flipland、拉伸窗口），
+     这个 px 就成了旧值：高度跟着 100% 改、宽度不改，
+     于是整幅图被横向挤压 —— 竖屏时封面明显变形就是这个原因。
+     所以书的盒子一变，就按新宽度重画一次。
+     ========================================================= */
+  function repaintPages() {
+    if (!pageL || !pageR || !PLATES || !PLATES.length) return;
+    if (turning) return;                        /* 翻页动画中交给 land/finishTurn */
+    if (drag && drag.active) return;            /* 拖拽中交给 land/restore，别打断预画的下一页 */
+    var cur = PLATES[plateIdx(idx)];
+    paint(pageL, cur);
+    paint(pageR, cur);
+  }
+  if (window.ResizeObserver) {
+    new ResizeObserver(function () { repaintPages(); }).observe(book);
+  } else {
+    window.addEventListener('resize', repaintPages);
   }
 
   /* =========================================================
@@ -1027,6 +1052,17 @@
       book.classList.remove('is-booting');
       book.classList.add('is-entering');
       setTimeout(function () { book.classList.remove('is-entering'); }, 1100);
+
+      /* 竖屏：加载条走完了才亮出「请把手机横过来」，
+         停留 2.7 秒后自动收起（等同于用户自己点了一下） */
+      document.body.classList.add('is-ready');
+      if (rotateEl && getComputedStyle(rotateEl).display !== 'none') {
+        rotateTimer = setTimeout(function () {
+          rotateTimer = 0;
+          if (getComputedStyle(rotateEl).display === 'none') return;
+          dismissRotate();
+        }, 2700);
+      }
     });
 
     setTimeout(function () {

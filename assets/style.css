@@ -1,4 +1,4 @@
-﻿/* =========================================================
+/* =========================================================
    我和我 · 翻书版
    Mesh Gradient 环境光 + 写实精装书 + 纸张翻动
    ========================================================= */
@@ -658,9 +658,12 @@ body{
   50%     { opacity:.62; transform:scale(1.04); }
 }
 
-/* 竖屏（手机 / 窄屏）才显示 */
+/* 竖屏（手机 / 窄屏）才显示；而且要等加载条走完（body.is-ready）才亮，
+   否则会和加载条抢同一块屏幕 */
 @media (orientation:portrait) and (max-width:1100px){
-  .rotate{ display:grid; }
+  body.is-ready .rotate{ display:grid; }
+  /* 收起后必须真的收起来：上面那条带 body 前缀，权重比 .rotate.is-off 高 */
+  body.is-ready .rotate.is-off{ display:none; }
 }
 /* 只要实际是横屏（宽>高），一律不显示提示层 —— 以 JS 判断为准 */
 body.is-landscape .rotate{ display:none; }
